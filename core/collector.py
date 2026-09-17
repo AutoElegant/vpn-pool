@@ -79,6 +79,27 @@ async def fetch_all() -> dict[str, ProxyConfig]:
 
 # ───────────────────────── 2. Запись в БД ─────────────────────────
 
+def drop_removed_sources(conn: sqlite3.Connection) -> int:
+    """Выкидываем конфиги источников, которых больше нет в config.yml.
+
+    Без этого убранный источник живёт вечно: его записи приезжают из
+    сохранённого состояния, а trim_pool трогает только лишнее сверх лимита.
+    Именно так иранские конфиги остались в пуле после перехода на русские.
+    """
+    names = [s.get("name", s["url"]) for s in SOURCES]
+    if not names:
+        return 0
+    placeholders = ",".join("?" * len(names))
+    cur = conn.execute(
+        f"DELETE FROM configs WHERE source IS NOT NULL AND source NOT IN ({placeholders})",
+        tuple(names),
+    )
+    conn.commit()
+    if cur.rowcount:
+        log.info("Удалено конфигов от убранных источников: %d", cur.rowcount)
+    return cur.rowcount
+
+
 def known_fingerprints(conn: sqlite3.Connection) -> set[str]:
     """Что уже в пуле + что недавно не ответило — таких в кандидаты не берём."""
     rows = conn.execute("SELECT fingerprint FROM configs").fetchall()
@@ -412,6 +433,7 @@ async def run_once(
     conn = connect()
     if state_path:
         state.import_state(conn, state_path)
+    drop_removed_sources(conn)
     run_id = conn.execute("INSERT INTO runs(started_at) VALUES(?)", (now(),)).lastrowid
     conn.commit()
 
