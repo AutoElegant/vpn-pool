@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -27,6 +28,11 @@ SYNC = CONFIG.get("sync", {})
 
 
 async def fetch_state(url: str, token: str | None) -> dict | None:
+    # CDN GitHub отдаёт raw-файлы из кэша до пяти минут и заголовок
+    # Cache-Control игнорирует, поэтому уникализируем сам адрес — иначе
+    # сервер может влить обратно пул, который уже устарел.
+    sep = "&" if "?" in url else "?"
+    url = f"{url}{sep}_={int(time.time())}"
     headers = {"User-Agent": "vpnbot-sync", "Cache-Control": "no-cache"}
     if token:
         headers["Authorization"] = f"Bearer {token}"

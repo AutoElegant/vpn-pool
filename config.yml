@@ -78,9 +78,12 @@ sources:
   - name: captchaq-best
     priority: 85
     url: https://raw.githubusercontent.com/CaptchaQ/vless-servers/main/working_best.txt
-  - name: kort0881-sni-ru
-    priority: 80
-    url: https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/archive/subscriptions/sni_filtered.txt
+  - name: kort0881-ru-sni
+    priority: 85
+    url: https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/data/githubmirror/ru-sni/vless.txt
+  - name: kort0881-ru-sni-local
+    priority: 85
+    url: https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/data/githubmirror/ru-sni-local/vless.txt
 
 # ─────────────── Синхронизация с GitHub Actions ───────────────
 # Проверка конфигов живёт в GitHub Actions, а не на этом сервере: раннер
