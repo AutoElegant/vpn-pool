@@ -85,7 +85,8 @@ _BASE = "alive = 1 AND ru_nodes > 0 AND link LIKE 'vless://%'"
 # Reality по TCP с XTLS Vision заметно живучее прочего: обычный TLS, ws и grpc
 # ТСПУ режет на хендшейке, даже когда сервер отвечает и трафик через него идёт.
 # Поэтому такие конфиги идут первыми, а не просто «побыстрее».
-_RANK = ("(security = 'reality') DESC, "
+_RANK = ("source_priority DESC, "
+         "(security = 'reality') DESC, "
          "(link LIKE '%flow=xtls-rprx-vision%') DESC, "
          "verified DESC, ru_nodes DESC, risk ASC, COALESCE(latency_ms, 9999) ASC")
 

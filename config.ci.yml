@@ -43,26 +43,44 @@ collector:
 
 
 # ─────────────── Источники ───────────────
-# Поддерживается plain-text и base64. Всё, что отдаёт vless:// — подойдёт.
+# Только источники, отобранные под Россию. Иранские агрегаторы исключены
+# намеренно: они обходят другой файрвол, маскируют SNI под другие домены,
+# и в России их конфиги в массе своей не открываются вовсе.
+# priority — кого предпочитать при дублях и при отборе в пул.
 sources:
-  - name: barry-far
-    url: https://raw.githubusercontent.com/barry-far/V2ray-Config/main/Splitted-By-Protocol/vless.txt
-  - name: epodonios
-    url: https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/Splitted-By-Protocol/vless.txt
-  - name: mahdibland-eternity
-    url: https://raw.githubusercontent.com/mahdibland/ShadowsocksAggregator/master/Eternity.txt
-  - name: mahdibland-air
-    url: https://raw.githubusercontent.com/mahdibland/ShadowsocksAggregator/master/EternityAir.txt
-  - name: aliilapro
-    url: https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/sub.txt
-  - name: matinghanbari
-    url: https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/v2ray/super-sub.txt
-  - name: 4n0nymou3-tested
-    url: https://raw.githubusercontent.com/4n0nymou3/multi-proxy-config-fetcher/main/configs/proxy_configs_tested.txt
-  - name: yaney01-telegram
-    url: https://raw.githubusercontent.com/yaney01/telegram-collector/main/channels/protocols/vless
-  - name: yaney01-reality
-    url: https://raw.githubusercontent.com/yaney01/telegram-collector/main/channels/protocols/reality
+  - name: igareck-rus
+    priority: 100
+    url: https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS.txt
+  - name: igareck-rus-mobile
+    priority: 100
+    url: https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt
+  - name: igareck-white-lists
+    priority: 95
+    url: https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/Vless-Reality-White-Lists-Rus-Mobile.txt
+  - name: lilyung-top100
+    priority: 95
+    url: https://raw.githubusercontent.com/lilyungcykamane/vless-checker/main/top100.txt
+  - name: lilyung-good
+    priority: 95
+    url: https://raw.githubusercontent.com/lilyungcykamane/vless-checker/main/good.txt
+  - name: luxxuria-speed
+    priority: 90
+    url: https://raw.githubusercontent.com/luxxuria/harvester/main/speed_tested.txt
+  - name: luxxuria-top600
+    priority: 85
+    url: https://raw.githubusercontent.com/luxxuria/harvester/main/top_600.txt
+  - name: flarefeed-fastest
+    priority: 90
+    url: https://raw.githubusercontent.com/svinakraft-maker/FlareFeed/main/public/fastest.txt
+  - name: flarefeed-vless
+    priority: 85
+    url: https://raw.githubusercontent.com/svinakraft-maker/FlareFeed/main/public/vless.txt
+  - name: captchaq-best
+    priority: 85
+    url: https://raw.githubusercontent.com/CaptchaQ/vless-servers/main/working_best.txt
+  - name: kort0881-sni-ru
+    priority: 80
+    url: https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/archive/subscriptions/sni_filtered.txt
 
 # ─────────────── Бот ───────────────
 bot:

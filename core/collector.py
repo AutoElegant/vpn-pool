@@ -32,8 +32,14 @@ def now() -> str:
 
 # ───────────────────────── 1. Загрузка источников ─────────────────────────
 
+# Приоритет источника: конфиг помнит, откуда он, чтобы отобранные под РКН
+# не растворились среди общих агрегаторов, которых на порядок больше.
+SOURCE_PRIORITY: dict[str, int] = {}
+
+
 async def fetch_source(session: aiohttp.ClientSession, src: dict) -> list[ProxyConfig]:
     name, url = src.get("name", src["url"]), src["url"]
+    SOURCE_PRIORITY[name] = int(src.get("priority", 0))
     try:
         async with session.get(url) as resp:
             resp.raise_for_status()
@@ -61,8 +67,10 @@ async def fetch_all() -> dict[str, ProxyConfig]:
     async with aiohttp.ClientSession(timeout=timeout, headers={"User-Agent": UA}) as session:
         batches = await asyncio.gather(*(fetch_source(session, s) for s in SOURCES))
 
+    # Порядок важен: при дубле остаётся конфиг из более доверенного источника.
     unique: dict[str, ProxyConfig] = {}
-    for batch in batches:
+    for batch in sorted(batches, key=lambda b: -SOURCE_PRIORITY.get(
+            b[0].source if b else "", 0)):
         for cfg in batch:
             unique.setdefault(cfg.fingerprint, cfg)
     log.info("Всего уникальных: %d (из %d)", len(unique), sum(len(b) for b in batches))
@@ -91,7 +99,9 @@ def pick_candidates(conn: sqlite3.Connection, fetched: dict[str, ProxyConfig]) -
     viable = [fp for fp in new if rucheck.censorship_risk(fetched[fp])[0] < threshold]
     log.info("Новых в источниках: %d, пригодны для РФ по признакам: %d", len(new), len(viable))
 
+    # Из доверенных источников берём всё, остальное добираем случайно.
     random.shuffle(viable)
+    viable.sort(key=lambda fp: -SOURCE_PRIORITY.get(fetched[fp].source, 0))
     batch = viable[: COLLECTOR.get("candidate_batch", 400)]
     log.info("Берём в проверку: %d", len(batch))
     return {fp: fetched[fp] for fp in batch}
@@ -103,13 +113,15 @@ def upsert(conn: sqlite3.Connection, configs: dict[str, ProxyConfig]) -> int:
     conn.executemany(
         """
         INSERT INTO configs(fingerprint, link, protocol, host, port, security,
-                            network, sni, source, risk, first_seen, last_seen)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                            network, sni, source, source_priority, risk,
+                            first_seen, last_seen)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(fingerprint) DO UPDATE SET last_seen=excluded.last_seen
         """,
         [
             (fp, c.to_link(""), c.protocol, c.host, c.port, c.security,
-             c.network, c.sni, c.source, rucheck.censorship_risk(c)[0], ts, ts)
+             c.network, c.sni, c.source, SOURCE_PRIORITY.get(c.source, 0),
+             rucheck.censorship_risk(c)[0], ts, ts)
             for fp, c in configs.items()
         ],
     )
@@ -322,8 +334,8 @@ def trim_pool(conn: sqlite3.Connection) -> tuple[int, int]:
     keep = {
         r[0] for r in conn.execute(
             "SELECT id FROM configs WHERE alive = 1 AND ru_nodes <> 0 "
-            "ORDER BY ru_nodes DESC, verified DESC, risk ASC, "
-            "COALESCE(latency_ms, 9999) ASC LIMIT ?",
+            "ORDER BY source_priority DESC, ru_nodes DESC, verified DESC, "
+            "risk ASC, COALESCE(latency_ms, 9999) ASC LIMIT ?",
             (pool_size,),
         ).fetchall()
     }

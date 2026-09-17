@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS configs (
     checks        INTEGER NOT NULL DEFAULT 0,
     oks           INTEGER NOT NULL DEFAULT 0,
     source        TEXT,
+    source_priority INTEGER NOT NULL DEFAULT 0,  -- насколько доверяем источнику
     first_seen    TEXT NOT NULL,
     last_seen     TEXT NOT NULL,
     last_ok       TEXT
@@ -116,6 +117,7 @@ MIGRATIONS = {
         "ru_nodes": "INTEGER NOT NULL DEFAULT -1",
         "risk": "INTEGER NOT NULL DEFAULT 0",
         "ru_checked_at": "TEXT",
+        "source_priority": "INTEGER NOT NULL DEFAULT 0",
     },
     "runs": {
         "pool": "INTEGER DEFAULT 0",

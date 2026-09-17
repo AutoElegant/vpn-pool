@@ -21,7 +21,8 @@ FIELDS = (
     "fingerprint", "link", "protocol", "host", "port", "ip", "security",
     "network", "sni", "country", "country_name", "city", "latency_ms",
     "alive", "verified", "ru_nodes", "ru_checked_at", "risk", "fail_streak",
-    "checks", "oks", "source", "first_seen", "last_seen", "last_ok",
+    "checks", "oks", "source", "source_priority",
+    "first_seen", "last_seen", "last_ok",
 )
 
 # Что считается рабочим конфигом: отвечает и доступен из России.
