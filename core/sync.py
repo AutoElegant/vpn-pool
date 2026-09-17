@@ -89,8 +89,19 @@ async def check_russia(conn) -> None:
     Здесь это дёшево и безопасно: несколько десятков HTTPS-запросов
     к одному домену раз в несколько минут — не то же самое, что коннекты
     к сотням разных адресов, за которые хостер присылает abuse.
+
+    Порций за один заход может быть несколько: бот отдаёт только
+    подтверждённые конфиги, и после прихода свежего пула нельзя ждать
+    полчаса, пока проверка доберётся до всех.
     """
-    limit = SYNC.get("ru_check_limit", 80)
+    for _ in range(max(1, SYNC.get("ru_check_rounds", 3))):
+        if not await check_russia_round(conn):
+            break
+
+
+async def check_russia_round(conn) -> bool:
+    """Одна порция. Возвращает False, если проверять больше нечего."""
+    limit = SYNC.get("ru_check_limit", 150)
     stale_hours = SYNC.get("ru_recheck_hours", 3)
     horizon = (
         datetime.now(timezone.utc) - timedelta(hours=stale_hours)
@@ -103,8 +114,7 @@ async def check_russia(conn) -> None:
         (horizon, limit),
     ).fetchall()
     if not rows:
-        log.info("РФ-проверка: всё свежее, нечего проверять")
-        return
+        return False
 
     targets = []
     for r in rows:
@@ -112,7 +122,7 @@ async def check_russia(conn) -> None:
         if cfg:
             targets.append((r["id"], cfg))
     if not targets:
-        return
+        return False
 
     results = await rucheck.tcp_from_russia(
         targets, concurrency=SYNC.get("ru_check_concurrency", 4)
@@ -130,6 +140,7 @@ async def check_russia(conn) -> None:
         "SELECT COUNT(*) FROM configs WHERE ru_nodes = -1 AND alive = 1"
     ).fetchone()[0]
     log.info("Из РФ: доступно %d, заблокировано %d, ещё не проверено %d", ok, blocked, todo)
+    return todo > 0
 
 
 def record_run(conn, data: dict) -> None:

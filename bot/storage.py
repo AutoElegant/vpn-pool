@@ -77,10 +77,11 @@ async def all_user_ids(only_active: bool = True) -> list[int]:
 
 # ───────────────────────── Конфиги ─────────────────────────
 
-# ru_nodes: сколько нод из РФ достучались. 0 — из России не работает,
-# -1 — проверить не удалось (выдаём, но в последнюю очередь).
-_ALIVE = "alive = 1 AND ru_nodes <> 0 AND link LIKE 'vless://%'"
-_RANK = "ru_nodes DESC, verified DESC, risk ASC, COALESCE(latency_ms, 9999) ASC"
+# Аудитория в России, поэтому выдаём только то, до чего из России реально
+# достучались: ru_nodes > 0. Ноль — заблокирован, минус один — ещё не
+# проверяли, и то и другое пользователю отдавать нельзя.
+_ALIVE = "alive = 1 AND ru_nodes > 0 AND link LIKE 'vless://%'"
+_RANK = "verified DESC, ru_nodes DESC, risk ASC, COALESCE(latency_ms, 9999) ASC"
 
 
 async def counts() -> tuple[int, int]:
