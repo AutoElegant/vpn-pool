@@ -46,18 +46,18 @@ async def _submit(session: aiohttp.ClientSession, host: str, port: int) -> str |
     return None
 
 
-async def _result(session: aiohttp.ClientSession, request_id: str) -> int:
-    """Сколько российских нод достучались. UNKNOWN, если ответа нет."""
+async def _result(session: aiohttp.ClientSession, request_id: str) -> tuple[int, int, int]:
+    """(достучались, ответили, всего нод). Ноды отвечают не одновременно."""
     try:
         async with session.get(f"{API}/check-result/{request_id}", headers=HEADERS) as resp:
             if resp.status != 200:
-                return UNKNOWN
+                return 0, 0, 0
             data = await resp.json(content_type=None)
     except Exception:
-        return UNKNOWN
+        return 0, 0, 0
 
     if not isinstance(data, dict):
-        return UNKNOWN
+        return 0, 0, 0
 
     ok = answered = 0
     for res in data.values():
@@ -67,13 +67,14 @@ async def _result(session: aiohttp.ClientSession, request_id: str) -> int:
         # Успех выглядит как [{"address": "1.2.3.4", "time": 0.19}]
         if isinstance(res, list) and res and isinstance(res[0], dict) and "time" in res[0]:
             ok += 1
-    return ok if answered else UNKNOWN
+    return ok, answered, len(data)
 
 
 async def tcp_from_russia(
     configs: list[tuple[int, ProxyConfig]],
     concurrency: int = 4,
-    settle: float = 14.0,
+    max_polls: int = 6,
+    poll_interval: float = 6.0,
 ) -> dict[int, int]:
     """{config_id: сколько нод из РФ достучались (0..3), либо UNKNOWN}.
 
@@ -83,8 +84,11 @@ async def tcp_from_russia(
        конфигов (разные UUID и порты), а доступность у них общая —
        это экономит около трети запросов.
     2. Запросы идут пачками параллельно, а не по одному с паузами.
-       Сначала ставим все задачи в очередь check-host, ждём один раз,
-       потом забираем результаты.
+       Сначала ставим все задачи в очередь check-host, потом забираем
+       результаты, опрашивая каждый до тех пор, пока не ответят все три
+       ноды. Однократное чтение через фиксированную паузу не годится:
+       на пачке в двести адресов ноды попросту не успевают, и почти всё
+       возвращается как «не проверено».
     """
     if not configs:
         return {}
@@ -110,13 +114,22 @@ async def tcp_from_russia(
             log.warning("check-host не принял ни одной задачи — пропускаю РФ-проверку")
             return results
 
+        # Даём нодам фору, пропорциональную размеру пачки.
+        settle = min(30.0, 8.0 + len(pending) / 25)
         log.info("check-host: %d адресов на %d конфигов, жду %.0f с",
                  len(pending), len(configs), settle)
         await asyncio.sleep(settle)
 
         async def fetch(ep: tuple[str, int], rid: str) -> tuple[tuple[str, int], int]:
-            async with sem:
-                return ep, await _result(session, rid)
+            ok = answered = 0
+            for attempt in range(max_polls):
+                async with sem:
+                    ok, answered, total = await _result(session, rid)
+                if total and answered >= total:      # ответили все ноды
+                    return ep, ok
+                await asyncio.sleep(poll_interval)
+            # Время вышло: считаем по тем, кто успел ответить.
+            return ep, (ok if answered else UNKNOWN)
 
         for ep, nodes in await asyncio.gather(*(fetch(ep, rid) for ep, rid in pending)):
             for cid in endpoints[ep]:
