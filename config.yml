@@ -85,6 +85,34 @@ sources:
     priority: 85
     url: https://raw.githubusercontent.com/kort0881/vpn-vless-configs-russia/main/data/githubmirror/ru-sni-local/vless.txt
 
+  - name: avencores-14
+    priority: 90
+    url: https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/14.txt
+  - name: avencores-13
+    priority: 90
+    url: https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/13.txt
+  - name: avencores-7
+    priority: 90
+    url: https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/7.txt
+  - name: avencores-24
+    priority: 88
+    url: https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/24.txt
+  - name: avencores-22
+    priority: 88
+    url: https://raw.githubusercontent.com/AvenCores/goida-vpn-configs/main/githubmirror/22.txt
+  - name: hidashimora-120
+    priority: 90
+    url: https://raw.githubusercontent.com/Hidashimora/free-vpn-anti-rkn/main/configs/1.20.txt
+  - name: hidashimora-142
+    priority: 90
+    url: https://raw.githubusercontent.com/Hidashimora/free-vpn-anti-rkn/main/configs/14.2.txt
+  - name: hidashimora-117
+    priority: 88
+    url: https://raw.githubusercontent.com/Hidashimora/free-vpn-anti-rkn/main/configs/1.17.txt
+  - name: flat447-black
+    priority: 85
+    url: https://raw.githubusercontent.com/FLAT447/v2ray-lists/main/sources/output/BLACK_FULL.txt
+
 # ─────────────── Синхронизация с GitHub Actions ───────────────
 # Проверка конфигов живёт в GitHub Actions, а не на этом сервере: раннер
 # сам ходит к тысячам VPN-серверов, и хостеру VPS нечего принять за скан.
