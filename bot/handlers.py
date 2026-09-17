@@ -1,6 +1,8 @@
 """Пользовательские хендлеры."""
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import io
 import logging
 import time
@@ -10,7 +12,8 @@ from aiogram.filters import CommandStart
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from core.geo import flag
-from core.settings import ADMIN_IDS, BOT, REQUIRED_CHANNEL
+from core.parse import parse_link
+from core.settings import ADMIN_IDS, BOT, BOT_USERNAME, REQUIRED_CHANNEL
 
 from . import keyboards as kb
 from . import storage, texts
@@ -19,6 +22,13 @@ log = logging.getLogger("bot.user")
 router = Router(name="user")
 
 _last_issue: dict[int, float] = {}
+
+# Telegram отдаёт file_id на каждое загруженное фото и умеет пересылать его
+# повторно без загрузки. Один и тот же конфиг уходит многим, поэтому QR
+# рисуется один раз, а дальше отправляется идентификатором — это экономит
+# и 75 мс процессорного времени, и трафик.
+_qr_cache: dict[str, str] = {}
+_QR_CACHE_MAX = 2000
 
 
 # ───────────────────────── помощники ─────────────────────────
@@ -33,6 +43,24 @@ async def check_subscribed(bot, user_id: int) -> bool:
         return True  # канал недоступен — не блокируем людей
 
 
+def brand(link: str) -> str:
+    """Дописывает имя бота в название конфига — так он подписан в списке
+    серверов внутри Happ.
+
+    Делается здесь, а не в коллекторе: пул лежит в публичном репозитории,
+    и светить там бота незачем. Заодно имя можно поменять в .env и
+    перезапустить бота, не дожидаясь следующего прохода сбора.
+    """
+    if not BOT_USERNAME:
+        return link
+    cfg = parse_link(link)
+    if cfg is None:
+        return link
+    # Отрезаем прежнюю подпись, чтобы она не накапливалась при повторной выдаче.
+    base = cfg.tag.split(" | @")[0].strip()
+    return cfg.to_link(f"{base} | @{BOT_USERNAME}" if base else f"@{BOT_USERNAME}")
+
+
 def make_qr(link: str) -> bytes | None:
     try:
         import qrcode
@@ -45,6 +73,40 @@ def make_qr(link: str) -> bytes | None:
         return buf.getvalue()
     except Exception:
         return None
+
+
+def qr_key(link: str) -> str:
+    return hashlib.sha1(link.encode()).hexdigest()
+
+
+async def send_qr(target: Message, link: str, caption: str, markup) -> bool:
+    """Шлёт QR: готовым file_id, если этот конфиг уже отправляли."""
+    key = qr_key(link)
+    cached = _qr_cache.get(key)
+    if cached:
+        try:
+            await target.answer_photo(cached, caption=caption, reply_markup=markup)
+            return True
+        except Exception:
+            _qr_cache.pop(key, None)   # file_id протух — перерисуем
+
+    # Рисование блокирующее (~75 мс), поэтому в отдельном потоке:
+    # иначе на одном ядре бот замирает и не отвечает остальным.
+    png = await asyncio.to_thread(make_qr, link)
+    if not png or len(png) > 9_000_000:
+        return False
+    try:
+        msg = await target.answer_photo(
+            BufferedInputFile(png, filename="happ-config.png"),
+            caption=caption,
+            reply_markup=markup,
+        )
+    except Exception:
+        return False
+
+    if msg.photo and len(_qr_cache) < _QR_CACHE_MAX:
+        _qr_cache[key] = msg.photo[-1].file_id
+    return True
 
 
 async def send_config(target: Message, user_id: int) -> None:
@@ -67,23 +129,17 @@ async def send_config(target: Message, user_id: int) -> None:
     _last_issue[user_id] = time.monotonic()
     await storage.log_issue(user_id, row["id"], row["country"])
 
+    link = brand(row["link"])
     caption = texts.CONFIG_CAPTION.format(
         flag=flag(row["country"]),
         country=row["country_name"] or row["country"] or "Неизвестно",
         city=f" · {row['city']}" if row["city"] else "",
-        link=row["link"],
+        link=link,
     )
     markup = kb.after_config()
 
-    if BOT.get("send_qr", True):
-        png = make_qr(row["link"])
-        if png and len(png) < 9_000_000:
-            await target.answer_photo(
-                BufferedInputFile(png, filename="happ-config.png"),
-                caption=caption,
-                reply_markup=markup,
-            )
-            return
+    if BOT.get("send_qr", True) and await send_qr(target, link, caption, markup):
+        return
     await target.answer(caption, reply_markup=markup, disable_web_page_preview=True)
 
 
