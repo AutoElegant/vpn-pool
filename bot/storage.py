@@ -80,7 +80,12 @@ async def all_user_ids(only_active: bool = True) -> list[int]:
 # Аудитория в России, поэтому выдаём только то, до чего из России реально
 # достучались: ru_nodes > 0. Ноль — заблокирован, минус один — ещё не
 # проверяли, и то и другое пользователю отдавать нельзя.
-_BASE = "alive = 1 AND ru_nodes > 0 AND link LIKE 'vless://%'"
+# ru_min_nodes: сколько российских нод должны пройти TLS-хендшейк.
+# Единственный подтверждённо рабочий конфиг дал 3 из 3, а всё, что
+# у пользователя не открылось, — 1 или 2. Частичный успех означает,
+# что часть маршрутов уже режется, и у конкретного провайдера
+# такой конфиг скорее всего не заработает.
+_BASE = "alive = 1 AND link LIKE 'vless://%'"
 
 # Reality по TCP с XTLS Vision заметно живучее прочего: обычный TLS, ws и grpc
 # ТСПУ режет на хендшейке, даже когда сервер отвечает и трафик через него идёт.
@@ -94,6 +99,9 @@ _RANK = ("source_priority DESC, "
 def _alive_sql() -> tuple[str, list]:
     """Условие выдачи и его параметры — география плюс профиль протокола."""
     where, params = [_BASE], []
+
+    where.append("ru_nodes >= ?")
+    params.append(int(BOT.get("ru_min_nodes", 3)))
 
     countries = BOT.get("allowed_countries") or []
     if countries:

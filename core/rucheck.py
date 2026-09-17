@@ -21,8 +21,11 @@ from .parse import ProxyConfig
 log = logging.getLogger("rucheck")
 
 API = "https://check-host.net"
+# Браузерный User-Agent обязателен: без него check-host отвечает 403.
+UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/127.0 Safari/537.36")
 RU_NODES = ("ru1.node.check-host.net", "ru2.node.check-host.net", "ru3.node.check-host.net")
-HEADERS = {"Accept": "application/json"}
+HEADERS = {"Accept": "application/json", "User-Agent": UA}
 
 UNKNOWN = -1  # проверить не удалось (лимиты API, сеть) — не путать с 0 «заблокирован»
 
@@ -30,10 +33,17 @@ UNKNOWN = -1  # проверить не удалось (лимиты API, сет
 # ───────────────────── 1. TCP из РФ через check-host ─────────────────────
 
 async def _submit(session: aiohttp.ClientSession, host: str, port: int) -> str | None:
-    params = [("host", f"{host}:{port}")] + [("node", n) for n in RU_NODES]
+    """Ставим проверку HTTPS, а не голого TCP.
+
+    ТСПУ режет не соединение, а TLS-хендшейк: порт отвечает, а рукопожатие
+    не проходит. check-http доводит дело до хендшейка и возвращает HTTP-код,
+    если сервер ответил — для Reality это ответ замаскированного сайта.
+    Голая TCP-проверка этого различить не может в принципе.
+    """
+    params = [("host", f"https://{host}:{port}")] + [("node", n) for n in RU_NODES]
     for attempt in range(3):
         try:
-            async with session.get(f"{API}/check-tcp", params=params, headers=HEADERS) as resp:
+            async with session.get(f"{API}/check-http", params=params, headers=HEADERS) as resp:
                 if resp.status == 429:          # упёрлись в лимит — подождём и повторим
                     await asyncio.sleep(3 * (attempt + 1))
                     continue
@@ -64,8 +74,11 @@ async def _result(session: aiohttp.ClientSession, request_id: str) -> tuple[int,
         if res is None:            # нода ещё считает
             continue
         answered += 1
-        # Успех выглядит как [{"address": "1.2.3.4", "time": 0.19}]
-        if isinstance(res, list) and res and isinstance(res[0], dict) and "time" in res[0]:
+        # Ответ ноды: [[успех, время, сообщение, http-код, ip]].
+        # Хендшейк состоялся тогда и только тогда, когда пришёл http-код;
+        # при блокировке там null и «Connection timed out».
+        if (isinstance(res, list) and res and isinstance(res[0], list)
+                and len(res[0]) >= 4 and res[0][3]):
             ok += 1
     return ok, answered, len(data)
 
