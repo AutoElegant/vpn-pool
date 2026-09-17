@@ -217,7 +217,7 @@ async def run_ru_check(
 
     log.info("Проверяю доступность из РФ для %d конфигов…", len(targets))
     results = await rucheck.tcp_from_russia(
-        targets, submit_delay=COLLECTOR.get("ru_check_delay", 1.2)
+        targets, concurrency=COLLECTOR.get("ru_check_concurrency", 4)
     )
     ts = now()
     conn.executemany(
@@ -358,7 +358,11 @@ def retag(conn: sqlite3.Connection) -> None:
 
 # ───────────────────────── main ─────────────────────────
 
-async def run_once(skip_deep: bool = False, state_path: str | None = None) -> None:
+async def run_once(
+    skip_deep: bool = False,
+    state_path: str | None = None,
+    pool_path: str | None = None,
+) -> None:
     init_db()
     conn = connect()
     if state_path:
@@ -408,7 +412,7 @@ async def run_once(skip_deep: bool = False, state_path: str | None = None) -> No
     )
     conn.commit()
     if state_path:
-        state.export_state(conn, state_path)
+        state.export_state(conn, state_path, pool_path=pool_path)
     conn.close()
     log.info("ГОТОВО: в пуле %d, подтверждено xray %d, доступно из РФ %d",
              pool, verified, ru_ok)
@@ -423,6 +427,8 @@ def main() -> None:
     ap.add_argument("--state", metavar="PATH",
                     help="JSON с пулом и чёрным списком: читается в начале, "
                          "пишется в конце (нужно для эфемерных раннеров CI)")
+    ap.add_argument("--pool", metavar="PATH",
+                    help="куда положить урезанный файл только с пулом (для сервера)")
     ap.add_argument("--limit", type=int, metavar="N",
                     help="брать не больше N ссылок из каждого источника (для тестов)")
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -440,7 +446,8 @@ def main() -> None:
     async def runner() -> None:
         while True:
             try:
-                await run_once(skip_deep=args.skip_deep, state_path=args.state)
+                await run_once(skip_deep=args.skip_deep, state_path=args.state,
+                               pool_path=args.pool)
             except Exception:
                 log.exception("проход упал")
             if not args.loop:

@@ -12,7 +12,7 @@ on:
       - ".github/workflows/collect.yml"
 
 permissions:
-  contents: write             # чтобы коммитить обновлённый пул
+  contents: write
 
 concurrency:
   group: collect
@@ -21,7 +21,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 40
 
     steps:
       - uses: actions/checkout@v4
@@ -42,24 +42,40 @@ jobs:
           sudo install -m 0755 xray /usr/local/bin/xray
           xray version | head -1
 
+      # Раннер эфемерный: пул и чёрный список прошлого прохода лежат
+      # в отдельной ветке pool, иначе каждый час начинали бы с нуля.
+      - name: Восстанавливаем состояние прошлого прохода
+        run: |
+          mkdir -p data
+          if curl -fsSL -o data/state.json \
+               "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/pool/state.json"; then
+            echo "состояние загружено: $(wc -c < data/state.json) байт"
+          else
+            echo "состояния нет — первый запуск"
+          fi
+
       - name: Сбор и проверка
         env:
-          VPN_CONFIG: config.ci.yml     # на раннере проверяем агрессивнее
-        run: python -m core.collector --state data/pool.json -v
+          VPN_CONFIG: config.ci.yml
+        run: python -m core.collector --state data/state.json --pool data/pool.json -v
 
+      # Публикуем одним коммитом на ветку pool с перезаписью: так репозиторий
+      # не пухнет на мегабайты в час, как было бы при коммитах в main.
       - name: Публикуем пул
         run: |
-          if git diff --quiet -- data/pool.json; then
-            echo "Пул не изменился"
-            exit 0
-          fi
-          POOL=$(python -c "import json;d=json.load(open('data/pool.json'));print(len(d['pool']))")
-          RU=$(python -c "import json;d=json.load(open('data/pool.json'));print(sum(1 for c in d['pool'] if (c.get('ru_nodes') or 0) > 0))")
+          WORK=$(mktemp -d)
+          cp data/state.json data/pool.json "$WORK"/
+          cd "$WORK"
+          git init -q -b pool
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/pool.json
-          git commit -m "пул: $POOL рабочих, из них $RU доступны из РФ"
-          git push
+          POOL=$(python -c "import json;print(len(json.load(open('pool.json'))['pool']))")
+          RU=$(python -c "import json;print(sum(1 for c in json.load(open('pool.json'))['pool'] if (c.get('ru_nodes') or 0) > 0))")
+          git add -A
+          git commit -q -m "пул: $POOL рабочих, из них $RU доступны из РФ"
+          git push -qf \
+            "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}" pool
+          echo "опубликовано: $POOL конфигов, $RU доступны из РФ"
 
       - name: Итог
         if: always()
@@ -72,10 +88,10 @@ jobs:
           d = json.loads(f.read_text())
           pool = d["pool"]
           ru = [c for c in pool if (c.get("ru_nodes") or 0) > 0]
-          countries = {c.get("country") for c in pool if c.get("country")}
+          countries = sorted({c.get("country") for c in pool if c.get("country")})
           print("## Результат прохода\n")
           print(f"- В пуле: **{len(pool)}**")
           print(f"- Доступны из РФ: **{len(ru)}**")
-          print(f"- Стран: **{len(countries)}**")
-          print(f"- Чёрный список: {len(d.get('deadlist', {}))}")
+          print(f"- Стран: **{len(countries)}** — {', '.join(countries[:20])}")
+          print(f"- Размер файла: {f.stat().st_size // 1024} КБ")
           PY

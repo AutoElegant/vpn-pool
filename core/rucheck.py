@@ -31,14 +31,19 @@ UNKNOWN = -1  # проверить не удалось (лимиты API, сет
 
 async def _submit(session: aiohttp.ClientSession, host: str, port: int) -> str | None:
     params = [("host", f"{host}:{port}")] + [("node", n) for n in RU_NODES]
-    try:
-        async with session.get(f"{API}/check-tcp", params=params, headers=HEADERS) as resp:
-            if resp.status != 200:
-                return None
-            data = await resp.json(content_type=None)
-            return data.get("request_id")
-    except Exception:
-        return None
+    for attempt in range(3):
+        try:
+            async with session.get(f"{API}/check-tcp", params=params, headers=HEADERS) as resp:
+                if resp.status == 429:          # упёрлись в лимит — подождём и повторим
+                    await asyncio.sleep(3 * (attempt + 1))
+                    continue
+                if resp.status != 200:
+                    return None
+                data = await resp.json(content_type=None)
+                return data.get("request_id")
+        except Exception:
+            await asyncio.sleep(1)
+    return None
 
 
 async def _result(session: aiohttp.ClientSession, request_id: str) -> int:
@@ -54,9 +59,8 @@ async def _result(session: aiohttp.ClientSession, request_id: str) -> int:
     if not isinstance(data, dict):
         return UNKNOWN
 
-    ok = 0
-    answered = 0
-    for node, res in data.items():
+    ok = answered = 0
+    for res in data.values():
         if res is None:            # нода ещё считает
             continue
         answered += 1
@@ -68,39 +72,55 @@ async def _result(session: aiohttp.ClientSession, request_id: str) -> int:
 
 async def tcp_from_russia(
     configs: list[tuple[int, ProxyConfig]],
-    submit_delay: float = 1.2,
+    concurrency: int = 4,
     settle: float = 14.0,
-    fetch_delay: float = 0.8,
 ) -> dict[int, int]:
     """{config_id: сколько нод из РФ достучались (0..3), либо UNKNOWN}.
 
-    Сначала ставим все задачи в очередь check-host, ждём, потом забираем
-    результаты — так проверка N серверов занимает ~N*2 секунд, а не N*15.
+    Две оптимизации, без которых проверка сотен конфигов занимает десятки минут:
+
+    1. Дедупликация по host:port. Один сервер обычно раздаёт несколько
+       конфигов (разные UUID и порты), а доступность у них общая —
+       это экономит около трети запросов.
+    2. Запросы идут пачками параллельно, а не по одному с паузами.
+       Сначала ставим все задачи в очередь check-host, ждём один раз,
+       потом забираем результаты.
     """
     if not configs:
         return {}
 
+    # (host, port) → какие конфиги за ним стоят
+    endpoints: dict[tuple[str, int], list[int]] = {}
+    for cid, cfg in configs:
+        endpoints.setdefault((cfg.host, cfg.port), []).append(cid)
+
     results: dict[int, int] = {cid: UNKNOWN for cid, _ in configs}
-    timeout = aiohttp.ClientTimeout(total=25)
+    sem = asyncio.Semaphore(concurrency)
+    timeout = aiohttp.ClientTimeout(total=30)
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        pending: list[tuple[int, str]] = []
-        for cid, cfg in configs:
-            rid = await _submit(session, cfg.host, cfg.port)
-            if rid:
-                pending.append((cid, rid))
-            await asyncio.sleep(submit_delay)
+        async def submit(ep: tuple[str, int]) -> tuple[tuple[str, int], str | None]:
+            async with sem:
+                return ep, await _submit(session, ep[0], ep[1])
+
+        submitted = await asyncio.gather(*(submit(ep) for ep in endpoints))
+        pending = [(ep, rid) for ep, rid in submitted if rid]
 
         if not pending:
             log.warning("check-host не принял ни одной задачи — пропускаю РФ-проверку")
             return results
 
-        log.info("check-host: поставлено %d задач, жду %.0f с", len(pending), settle)
+        log.info("check-host: %d адресов на %d конфигов, жду %.0f с",
+                 len(pending), len(configs), settle)
         await asyncio.sleep(settle)
 
-        for cid, rid in pending:
-            results[cid] = await _result(session, rid)
-            await asyncio.sleep(fetch_delay)
+        async def fetch(ep: tuple[str, int], rid: str) -> tuple[tuple[str, int], int]:
+            async with sem:
+                return ep, await _result(session, rid)
+
+        for ep, nodes in await asyncio.gather(*(fetch(ep, rid) for ep, rid in pending)):
+            for cid in endpoints[ep]:
+                results[cid] = nodes
 
     reachable = sum(1 for v in results.values() if v > 0)
     unknown = sum(1 for v in results.values() if v == UNKNOWN)

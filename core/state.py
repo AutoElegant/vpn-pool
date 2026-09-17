@@ -24,10 +24,18 @@ FIELDS = (
     "oks", "source", "first_seen", "last_seen", "last_ok",
 )
 
-MAX_DEADLIST = 20000  # чтобы файл не рос бесконечно
+MAX_DEADLIST = 12000  # чтобы файл не рос бесконечно
 
 
-def export_state(conn: sqlite3.Connection, path: Path | str) -> dict:
+def export_state(
+    conn: sqlite3.Connection, path: Path | str, pool_path: Path | str | None = None
+) -> dict:
+    """Пишет полное состояние в `path`.
+
+    Если задан `pool_path`, отдельно кладёт туда урезанный файл только с пулом —
+    его качает сервер каждые 10 минут, и таскать ради этого чёрный список
+    на сотни килобайт незачем.
+    """
     cols = ", ".join(FIELDS)
     pool = [
         dict(zip(FIELDS, row))
@@ -52,11 +60,23 @@ def export_state(conn: sqlite3.Connection, path: Path | str) -> dict:
         "deadlist": dead,
         "geo_cache": geo,
     }
+    # Компактно, без отступов: файл перезаписывается каждый час,
+    # и лишние переводы строк тут превращаются в сотни лишних килобайт.
+    dump = lambda obj: json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-    log.info("Состояние сохранено: %s (пул %d, чёрный список %d)",
-             path, len(pool), len(dead))
+    path.write_text(dump(payload), encoding="utf-8")
+
+    if pool_path:
+        slim = {"updated_at": payload["updated_at"], "pool": pool,
+                "geo_cache": geo}
+        pool_path = Path(pool_path)
+        pool_path.parent.mkdir(parents=True, exist_ok=True)
+        pool_path.write_text(dump(slim), encoding="utf-8")
+
+    log.info("Состояние сохранено: %s (пул %d, чёрный список %d, %.0f КБ)",
+             path, len(pool), len(dead), path.stat().st_size / 1024)
     return payload
 
 
