@@ -1,7 +1,17 @@
+# Секреты — ни в каком виде
 .env
+.env.*
+!.env.example
+*.key
+*.pem
+id_rsa*
+id_ed25519*
+
 venv/
 __pycache__/
 *.pyc
+
+# Локальная БД
 data/*.db
 data/*.db-wal
 data/*.db-shm
