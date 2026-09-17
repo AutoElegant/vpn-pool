@@ -11,9 +11,10 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand, BotCommandScopeChat
 
 from core.db import init_db
-from core.settings import ADMIN_IDS, BOT_TOKEN
+from core.settings import ADMIN_IDS, BOT, BOT_TOKEN
 
 from . import admin, handlers, storage, texts
+from .middlewares import Throttle
 
 log = logging.getLogger("bot")
 
@@ -61,6 +62,19 @@ async def main() -> None:
 
     bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
+
+    # Антифлуд вешаем на внешний уровень: он отбивает лишнее до хендлеров,
+    # до обращений к базе и до любых ответов.
+    throttle = Throttle(
+        rate=BOT.get("throttle_rate", 1.0),
+        burst=BOT.get("throttle_burst", 4),
+        strikes=BOT.get("throttle_strikes", 8),
+        ban_for=BOT.get("throttle_ban_seconds", 60),
+        exempt=ADMIN_IDS,
+    )
+    dp.message.outer_middleware(throttle)
+    dp.callback_query.outer_middleware(throttle)
+
     dp.include_router(admin.router)     # админ-роутер первым: перехватывает FSM
     dp.include_router(handlers.router)
 

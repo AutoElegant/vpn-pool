@@ -22,6 +22,7 @@ log = logging.getLogger("bot.user")
 router = Router(name="user")
 
 _last_issue: dict[int, float] = {}
+_last_gc = 0.0
 
 # Telegram отдаёт file_id на каждое загруженное фото и умеет пересылать его
 # повторно без загрузки. Один и тот же конфиг уходит многим, поэтому QR
@@ -109,13 +110,27 @@ async def send_qr(target: Message, link: str, caption: str, markup) -> bool:
     return True
 
 
-async def send_config(target: Message, user_id: int) -> None:
-    cooldown = BOT.get("cooldown_seconds", 15)
-    left = cooldown - (time.monotonic() - _last_issue.get(user_id, 0))
-    if left > 0 and user_id not in ADMIN_IDS:
-        await target.answer(texts.COOLDOWN.format(sec=int(left) + 1))
-        return
+def cooldown_left(user_id: int) -> int:
+    """Сколько секунд ещё нельзя брать новый конфиг. 0 — можно."""
+    if user_id in ADMIN_IDS:
+        return 0
+    passed = time.monotonic() - _last_issue.get(user_id, 0.0)
+    left = BOT.get("cooldown_seconds", 10) - passed
+    return int(left) + 1 if left > 0 else 0
 
+
+def forget_old_issues(now: float) -> None:
+    """Чистим отметки о выдачах, иначе словарь растёт с каждым пользователем."""
+    global _last_gc
+    if now - _last_gc < 300:
+        return
+    _last_gc = now
+    horizon = BOT.get("cooldown_seconds", 10) * 4
+    for uid in [u for u, ts in _last_issue.items() if now - ts > horizon]:
+        _last_issue.pop(uid, None)
+
+
+async def send_config(target: Message, user_id: int) -> None:
     limit = BOT.get("daily_limit", 0)
     if limit and user_id not in ADMIN_IDS and await storage.issued_today(user_id) >= limit:
         await target.answer(texts.LIMIT_REACHED.format(limit=limit))
@@ -126,7 +141,9 @@ async def send_config(target: Message, user_id: int) -> None:
         await target.answer(texts.NO_CONFIGS, reply_markup=kb.main_menu(user_id in ADMIN_IDS))
         return
 
-    _last_issue[user_id] = time.monotonic()
+    now = time.monotonic()
+    _last_issue[user_id] = now
+    forget_old_issues(now)
     await storage.log_issue(user_id, row["id"], row["country"])
 
     link = brand(row["link"])
@@ -204,6 +221,12 @@ async def cb_howto(call: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("get:"))
 async def cb_get(call: CallbackQuery) -> None:
+    # Кулдаун — первым делом, до любых запросов к базе.
+    left = cooldown_left(call.from_user.id)
+    if left:
+        await call.answer(f"Подожди ещё {left} сек ⏳", show_alert=False)
+        return
+
     await storage.upsert_user(
         call.from_user.id, call.from_user.username,
         call.from_user.first_name, call.from_user.language_code,
