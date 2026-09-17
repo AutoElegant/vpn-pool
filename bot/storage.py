@@ -90,10 +90,19 @@ _BASE = "alive = 1 AND link LIKE 'vless://%'"
 # Reality по TCP с XTLS Vision заметно живучее прочего: обычный TLS, ws и grpc
 # ТСПУ режет на хендшейке, даже когда сервер отвечает и трафик через него идёт.
 # Поэтому такие конфиги идут первыми, а не просто «побыстрее».
-_RANK = ("source_priority DESC, "
-         "(security = 'reality') DESC, "
-         "(link LIKE '%flow=xtls-rprx-vision%') DESC, "
-         "verified DESC, ru_nodes DESC, risk ASC, COALESCE(latency_ms, 9999) ASC")
+def _rank_sql() -> tuple[str, list]:
+    """Порядок выдачи. Близкие страны первыми, дальше — по качеству конфига."""
+    near = [str(c).upper() for c in (BOT.get("preferred_countries") or [])]
+    head, params = "", []
+    if near:
+        head = f"(country IN ({','.join('?' * len(near))})) DESC, "
+        params = near
+    return head + (
+        "source_priority DESC, "
+        "(security = 'reality') DESC, "
+        "(link LIKE '%flow=xtls-rprx-vision%') DESC, "
+        "verified DESC, ru_nodes DESC, risk ASC, COALESCE(latency_ms, 9999) ASC"
+    ), params
 
 
 def _alive_sql() -> tuple[str, list]:
@@ -167,23 +176,24 @@ async def pick_config(user_id: int) -> aiosqlite.Row | None:
     since = iso(utcnow() - timedelta(days=7))
     where, params = _alive_sql()
 
+    rank, rparams = _rank_sql()
     cur = await db.execute(
         f"""
         SELECT c.* FROM configs c
          WHERE {where}
            AND c.id NOT IN (SELECT config_id FROM issued WHERE user_id = ? AND ts > ?)
-         ORDER BY {_RANK}
+         ORDER BY {rank}
          LIMIT ?
         """,
-        (*params, user_id, since, pick_pool()),
+        (*params, user_id, since, *rparams, pick_pool()),
     )
     rows = await cur.fetchall()
 
     if not rows:  # всё уже выдавали — снимаем ограничение
         cur = await db.execute(
             f"""SELECT * FROM configs WHERE {where}
-                ORDER BY {_RANK} LIMIT ?""",
-            (*params, pick_pool()),
+                ORDER BY {rank} LIMIT ?""",
+            (*params, *rparams, pick_pool()),
         )
         rows = await cur.fetchall()
 
