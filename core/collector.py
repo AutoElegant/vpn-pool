@@ -224,6 +224,16 @@ async def run_ru_check(
         "UPDATE configs SET ru_nodes = ?, ru_checked_at = ? WHERE id = ?",
         [(nodes, ts, cid) for cid, nodes in results.items()],
     )
+    # Недоступность из РФ — такой же промах, как отказ соединения:
+    # копим подряд идущие, чтобы не выбрасывать конфиг из-за одного сбоя.
+    conn.executemany(
+        "UPDATE configs SET fail_streak = fail_streak + 1 WHERE id = ?",
+        [(cid,) for cid, nodes in results.items() if nodes == 0],
+    )
+    conn.executemany(
+        "UPDATE configs SET fail_streak = 0 WHERE id = ?",
+        [(cid,) for cid, nodes in results.items() if nodes > 0],
+    )
     conn.commit()
 
 
@@ -291,17 +301,19 @@ async def enrich_geo(conn: sqlite3.Connection) -> None:
 # ───────────────────────── 5. Уборка ─────────────────────────
 
 def trim_pool(conn: sqlite3.Connection) -> tuple[int, int]:
-    """Оставляем pool_size лучших живых конфигов, остальное выкидываем.
+    """Оставляем pool_size лучших плюс тех, кто оступился разок.
 
-    Не ответившие уезжают в deadlist, чтобы не проверять их снова каждые 30 минут.
-    Живые сверх лимита просто удаляются — они ещё вернутся из источников.
+    Ключевое разделение: из выдачи конфиг пропадает сразу, как только
+    перестал отвечать (бот берёт только alive = 1), но из базы удаляется
+    лишь после grace_fails промахов подряд. Иначе секундное моргание
+    сервера или сбой ноды check-host навсегда выкидывали бы рабочий конфиг.
     """
-    pool_size = COLLECTOR.get("pool_size", 150)
+    pool_size = COLLECTOR.get("pool_size", 500)
+    grace = COLLECTOR.get("grace_fails", 3)
     ttl_days = COLLECTOR.get("dead_ttl_days", 3)
     until = (datetime.now(timezone.utc) + timedelta(days=ttl_days)).isoformat(timespec="seconds")
 
-    # Конфиг, до которого из РФ не достучалась ни одна нода, в пуле не нужен —
-    # для пользователя из России он мёртв, как бы бодро ни отвечал в Европе.
+    # Рабочее ядро: отвечает и доступно из России.
     keep = {
         r[0] for r in conn.execute(
             "SELECT id FROM configs WHERE alive = 1 AND ru_nodes <> 0 "
@@ -310,9 +322,21 @@ def trim_pool(conn: sqlite3.Connection) -> tuple[int, int]:
             (pool_size,),
         ).fetchall()
     }
+    # Испытательный срок: недавно работали, промахнулись меньше grace раз.
+    recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(timespec="seconds")
+    grace_ids = {
+        r[0] for r in conn.execute(
+            "SELECT id FROM configs WHERE fail_streak BETWEEN 1 AND ? "
+            "AND last_ok IS NOT NULL AND last_ok > ?",
+            (grace - 1, recent),
+        ).fetchall()
+    }
+    keep |= grace_ids
 
+    # В чёрный список — только исчерпавшие попытки.
     dead = conn.execute(
-        "SELECT fingerprint FROM configs WHERE checks > 0 AND (alive = 0 OR ru_nodes = 0)"
+        "SELECT fingerprint FROM configs WHERE checks > 0 AND fail_streak >= ?",
+        (grace,),
     ).fetchall()
     conn.executemany(
         "INSERT INTO deadlist(fingerprint, until) VALUES(?,?) "
@@ -328,9 +352,13 @@ def trim_pool(conn: sqlite3.Connection) -> tuple[int, int]:
 
     conn.execute("DELETE FROM deadlist WHERE until < ?", (now(),))
     conn.commit()
-    log.info("Пул: оставлено %d, удалено %d (в чёрный список %d)",
-             len(keep), cur.rowcount, len(dead))
-    return len(keep), cur.rowcount
+
+    live = conn.execute(
+        "SELECT COUNT(*) FROM configs WHERE alive = 1 AND ru_nodes <> 0"
+    ).fetchone()[0]
+    log.info("Пул: %d рабочих, %d на испытательном сроке, удалено %d (в чёрный список %d)",
+             live, len(grace_ids), cur.rowcount, len(dead))
+    return live, cur.rowcount
 
 
 # ───────────────────────── 6. Именование ─────────────────────────

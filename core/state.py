@@ -20,9 +20,13 @@ log = logging.getLogger("state")
 FIELDS = (
     "fingerprint", "link", "protocol", "host", "port", "ip", "security",
     "network", "sni", "country", "country_name", "city", "latency_ms",
-    "alive", "verified", "ru_nodes", "ru_checked_at", "risk", "checks",
-    "oks", "source", "first_seen", "last_seen", "last_ok",
+    "alive", "verified", "ru_nodes", "ru_checked_at", "risk", "fail_streak",
+    "checks", "oks", "source", "first_seen", "last_seen", "last_ok",
 )
+
+# Что считается рабочим конфигом: отвечает и доступен из России.
+# ru_nodes = -1 значит «проверить не удалось» — такие отдаём, но последними.
+LIVE = "alive = 1 AND ru_nodes <> 0"
 
 MAX_DEADLIST = 12000  # чтобы файл не рос бесконечно
 
@@ -37,9 +41,15 @@ def export_state(
     на сотни килобайт незачем.
     """
     cols = ", ".join(FIELDS)
+    # В полное состояние идут ВСЕ записи, включая тех, кто на испытательном
+    # сроке (alive = 0, но промахов меньше лимита). Иначе следующий проход
+    # про них забудет и начнёт проверять заново как незнакомцев.
+    everything = [
+        dict(zip(FIELDS, row)) for row in conn.execute(f"SELECT {cols} FROM configs")
+    ]
     pool = [
         dict(zip(FIELDS, row))
-        for row in conn.execute(f"SELECT {cols} FROM configs WHERE alive = 1")
+        for row in conn.execute(f"SELECT {cols} FROM configs WHERE {LIVE}")
     ]
     dead = dict(
         conn.execute(
@@ -56,7 +66,7 @@ def export_state(
 
     payload = {
         "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "pool": pool,
+        "pool": everything,
         "deadlist": dead,
         "geo_cache": geo,
     }
@@ -75,8 +85,9 @@ def export_state(
         pool_path.parent.mkdir(parents=True, exist_ok=True)
         pool_path.write_text(dump(slim), encoding="utf-8")
 
-    log.info("Состояние сохранено: %s (пул %d, чёрный список %d, %.0f КБ)",
-             path, len(pool), len(dead), path.stat().st_size / 1024)
+    log.info("Состояние сохранено: %s (записей %d, из них рабочих %d, "
+             "чёрный список %d, %.0f КБ)",
+             path, len(everything), len(pool), len(dead), path.stat().st_size / 1024)
     return payload
 
 
