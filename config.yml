@@ -87,6 +87,17 @@ bot:
   cooldown_seconds: 10        # пауза между выдачами конфига одному юзеру
   pick_pool: 200              # из скольких лучших тянем случайный конфиг
 
+  # Отдаём только страны с вменяемым пингом из России. США, Канада, Азия —
+  # даже когда конфиг рабочий, задержка делает его бесполезным.
+  allowed_countries: [NL, DE, PL, FI, SE, NO, DK, EE, LV, LT, GB, FR, CH, AT,
+                      CZ, SK, HU, RO, BG, RS, HR, SI, MD, UA, BY, IT, ES, BE,
+                      IE, LU, GR, MK, AL, ME, BA, RU, TR, KZ, AM, GE, AZ, CY]
+
+  # Reality с XTLS Vision по TCP — единственный профиль, который стабильно
+  # проходит ТСПУ. Обычный TLS, ws и grpc режутся на хендшейке.
+  require_reality: true       # только security=reality
+  require_vision: false       # ещё жёстче: только flow=xtls-rprx-vision по TCP
+
   # Антифлуд: отбивает лишние апдейты ещё до обработчиков.
   # rate — действий в секунду в среднем, burst — сколько можно разом.
   throttle_rate: 1.0

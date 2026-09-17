@@ -80,15 +80,40 @@ async def all_user_ids(only_active: bool = True) -> list[int]:
 # Аудитория в России, поэтому выдаём только то, до чего из России реально
 # достучались: ru_nodes > 0. Ноль — заблокирован, минус один — ещё не
 # проверяли, и то и другое пользователю отдавать нельзя.
-_ALIVE = "alive = 1 AND ru_nodes > 0 AND link LIKE 'vless://%'"
-_RANK = "verified DESC, ru_nodes DESC, risk ASC, COALESCE(latency_ms, 9999) ASC"
+_BASE = "alive = 1 AND ru_nodes > 0 AND link LIKE 'vless://%'"
+
+# Reality по TCP с XTLS Vision заметно живучее прочего: обычный TLS, ws и grpc
+# ТСПУ режет на хендшейке, даже когда сервер отвечает и трафик через него идёт.
+# Поэтому такие конфиги идут первыми, а не просто «побыстрее».
+_RANK = ("(security = 'reality') DESC, "
+         "(link LIKE '%flow=xtls-rprx-vision%') DESC, "
+         "verified DESC, ru_nodes DESC, risk ASC, COALESCE(latency_ms, 9999) ASC")
+
+
+def _alive_sql() -> tuple[str, list]:
+    """Условие выдачи и его параметры — география плюс профиль протокола."""
+    where, params = [_BASE], []
+
+    countries = BOT.get("allowed_countries") or []
+    if countries:
+        where.append(f"country IN ({','.join('?' * len(countries))})")
+        params += [str(c).upper() for c in countries]
+
+    if BOT.get("require_reality", True):
+        where.append("security = 'reality'")
+    if BOT.get("require_vision", False):
+        where.append("network = 'tcp' AND link LIKE '%flow=xtls-rprx-vision%'")
+
+    return " AND ".join(where), params
 
 
 async def counts() -> tuple[int, int]:
-    """(живых конфигов, стран)."""
+    """(доступных конфигов, стран)."""
     db = await get_db()
+    where, params = _alive_sql()
     cur = await db.execute(
-        f"SELECT COUNT(*), COUNT(DISTINCT NULLIF(country,'')) FROM configs WHERE {_ALIVE}"
+        f"SELECT COUNT(*), COUNT(DISTINCT NULLIF(country,'')) FROM configs WHERE {where}",
+        params,
     )
     row = await cur.fetchone()
     return (row[0] or 0, row[1] or 0)
@@ -97,14 +122,16 @@ async def counts() -> tuple[int, int]:
 async def countries() -> list[tuple[str, str, int]]:
     """[(ISO, название, сколько)] по убыванию количества."""
     db = await get_db()
+    where, params = _alive_sql()
     cur = await db.execute(
         f"""
         SELECT country, MAX(country_name) AS name, COUNT(*) AS n
           FROM configs
-         WHERE {_ALIVE} AND country IS NOT NULL AND country <> ''
+         WHERE {where} AND country IS NOT NULL AND country <> ''
          GROUP BY country
          ORDER BY n DESC, country ASC
-        """
+        """,
+        params,
     )
     return [(r["country"], r["name"] or r["country"], r["n"]) for r in await cur.fetchall()]
 
@@ -129,24 +156,25 @@ async def pick_config(user_id: int) -> aiosqlite.Row | None:
     """
     db = await get_db()
     since = iso(utcnow() - timedelta(days=7))
+    where, params = _alive_sql()
 
     cur = await db.execute(
         f"""
         SELECT c.* FROM configs c
-         WHERE {_ALIVE}
+         WHERE {where}
            AND c.id NOT IN (SELECT config_id FROM issued WHERE user_id = ? AND ts > ?)
          ORDER BY {_RANK}
          LIMIT ?
         """,
-        (user_id, since, pick_pool()),
+        (*params, user_id, since, pick_pool()),
     )
     rows = await cur.fetchall()
 
     if not rows:  # всё уже выдавали — снимаем ограничение
         cur = await db.execute(
-            f"""SELECT * FROM configs WHERE {_ALIVE}
+            f"""SELECT * FROM configs WHERE {where}
                 ORDER BY {_RANK} LIMIT ?""",
-            (pick_pool(),),
+            (*params, pick_pool()),
         )
         rows = await cur.fetchall()
 
@@ -189,15 +217,18 @@ async def stats() -> dict:
     d7 = iso(utcnow() - timedelta(days=7))
     midnight = iso(utcnow().replace(hour=0, minute=0, second=0, microsecond=0))
 
+    where, wparams = _alive_sql()
     cur = await db.execute(
         f"""SELECT country, MAX(country_name) AS name, COUNT(*) n FROM configs
-            WHERE {_ALIVE} AND country <> '' GROUP BY country ORDER BY n DESC LIMIT 8"""
+            WHERE {where} AND country <> '' GROUP BY country ORDER BY n DESC LIMIT 8""",
+        wparams,
     )
     top = await cur.fetchall()
 
     cur = await db.execute(
-        f"""SELECT latency_ms FROM configs WHERE {_ALIVE} AND latency_ms IS NOT NULL
-            ORDER BY latency_ms"""
+        f"""SELECT latency_ms FROM configs WHERE {where} AND latency_ms IS NOT NULL
+            ORDER BY latency_ms""",
+        wparams,
     )
     lats = [r[0] for r in await cur.fetchall()]
 
@@ -214,13 +245,14 @@ async def stats() -> dict:
         "users_new_7d":  await one("SELECT COUNT(*) FROM users WHERE joined_at > ?", (d7,)),
         "users_blocked": await one("SELECT COUNT(*) FROM users WHERE is_blocked = 1"),
         "cfg_total":     await one("SELECT COUNT(*) FROM configs"),
-        "cfg_alive":     await one(f"SELECT COUNT(*) FROM configs WHERE {_ALIVE}"),
+        "cfg_alive":     await one(f"SELECT COUNT(*) FROM configs WHERE {where}", tuple(wparams)),
         "cfg_verified":  await one("SELECT COUNT(*) FROM configs WHERE verified = 1"),
         "cfg_ru_ok":     await one("SELECT COUNT(*) FROM configs WHERE ru_nodes > 0"),
         "cfg_ru_bad":    await one("SELECT COUNT(*) FROM configs WHERE ru_nodes = 0"),
         "cfg_ru_todo":   await one("SELECT COUNT(*) FROM configs WHERE ru_nodes = -1"),
         "cfg_countries": await one(
-            f"SELECT COUNT(DISTINCT country) FROM configs WHERE {_ALIVE} AND country <> ''"),
+            f"SELECT COUNT(DISTINCT country) FROM configs WHERE {where} AND country <> ''",
+            tuple(wparams)),
         "cfg_latency":   lats[len(lats) // 2] if lats else 0,
         "issued_total":  await one("SELECT COUNT(*) FROM issued"),
         "issued_24h":    await one("SELECT COUNT(*) FROM issued WHERE ts > ?", (d1,)),
