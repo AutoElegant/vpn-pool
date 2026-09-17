@@ -70,14 +70,16 @@ def render_stats(s: dict) -> str:
 
     run = s["run"]
     if run:
+        collected = (run["started_at"] or "")[:16].replace("T", " ")
+        synced = (run["finished_at"] or "")[:16].replace("T", " ")
         last_run = (
-            f"{run['finished_at'][:16].replace('T', ' ')} UTC · "
-            f"источников {run['fetched']}, новых {run['new_configs']}, "
-            f"проверено {run['checked']}, живых {run['alive']}, "
-            f"xray-ok {run['verified']}, РФ-ok {run['ru_ok']}, удалено {run['dropped']}"
+            f"├ Собран на GitHub: {collected} UTC\n"
+            f"├ Получен сервером: {synced} UTC\n"
+            f"├ Конфигов: <b>{run['pool']}</b>, из них xray-ok <b>{run['verified']}</b>\n"
+            f"└ Из РФ: доступно <b>{run['ru_ok']}</b>, заблокировано <b>{run['dropped']}</b>"
         )
     else:
-        last_run = "ещё не запускался"
+        last_run = "└ пул ещё не приезжал"
 
     return texts.ADMIN_STATS.format(top_countries=top, last_run=last_run, **{
         k: v for k, v in s.items() if k not in ("top", "run")

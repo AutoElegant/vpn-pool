@@ -78,13 +78,15 @@ ADMIN_STATS = (
     "├ Живых: <b>{cfg_alive}</b>\n"
     "├ Подтверждено xray: <b>{cfg_verified}</b>\n"
     "├ Доступно из РФ: <b>{cfg_ru_ok}</b>\n"
+    "├ Из РФ заблокировано: <b>{cfg_ru_bad}</b>\n"
+    "├ Ещё не проверено: <b>{cfg_ru_todo}</b>\n"
     "├ Стран: <b>{cfg_countries}</b>\n"
     "└ Медианный пинг: <b>{cfg_latency} мс</b>\n\n"
     "<b>Выдачи</b>\n"
     "├ Всего: <b>{issued_total}</b>\n"
     "└ За 24ч: <b>{issued_24h}</b>\n\n"
     "<b>Последний сбор</b>\n"
-    "└ {last_run}\n\n"
+    "{last_run}\n\n"
     "🏆 <b>Топ стран</b>\n{top_countries}"
 )
 

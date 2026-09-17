@@ -204,6 +204,8 @@ async def stats() -> dict:
         "cfg_alive":     await one(f"SELECT COUNT(*) FROM configs WHERE {_ALIVE}"),
         "cfg_verified":  await one("SELECT COUNT(*) FROM configs WHERE verified = 1"),
         "cfg_ru_ok":     await one("SELECT COUNT(*) FROM configs WHERE ru_nodes > 0"),
+        "cfg_ru_bad":    await one("SELECT COUNT(*) FROM configs WHERE ru_nodes = 0"),
+        "cfg_ru_todo":   await one("SELECT COUNT(*) FROM configs WHERE ru_nodes = -1"),
         "cfg_countries": await one(
             f"SELECT COUNT(DISTINCT country) FROM configs WHERE {_ALIVE} AND country <> ''"),
         "cfg_latency":   lats[len(lats) // 2] if lats else 0,

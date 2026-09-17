@@ -132,6 +132,37 @@ async def check_russia(conn) -> None:
     log.info("Из РФ: доступно %d, заблокировано %d, ещё не проверено %d", ok, blocked, todo)
 
 
+def record_run(conn, data: dict) -> None:
+    """Отмечаем сбор в таблице runs — из неё админка берёт «Последний сбор».
+
+    Сам сбор идёт на раннере, сюда приезжает только результат, поэтому
+    запись заводится при синхронизации. На один пул — одна строка: каждые
+    десять минут она обновляется свежими данными РФ-проверки, а новая
+    появляется, когда раннер опубликует следующий пул.
+    """
+    collected = data.get("updated_at") or ""
+    pool = conn.execute("SELECT COUNT(*) FROM configs").fetchone()[0]
+    verified = conn.execute("SELECT COUNT(*) FROM configs WHERE verified = 1").fetchone()[0]
+    ru_ok = conn.execute("SELECT COUNT(*) FROM configs WHERE ru_nodes > 0").fetchone()[0]
+    ru_bad = conn.execute("SELECT COUNT(*) FROM configs WHERE ru_nodes = 0").fetchone()[0]
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    row = conn.execute("SELECT id FROM runs WHERE started_at = ?", (collected,)).fetchone()
+    if row:
+        conn.execute(
+            "UPDATE runs SET finished_at=?, alive=?, verified=?, pool=?, ru_ok=?, dropped=? "
+            "WHERE id=?",
+            (now, pool, verified, pool, ru_ok, ru_bad, row[0]),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO runs(started_at, finished_at, alive, verified, pool, ru_ok, dropped) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (collected, now, pool, verified, pool, ru_ok, ru_bad),
+        )
+    conn.commit()
+
+
 async def run_once() -> int:
     url = os.getenv("POOL_URL") or SYNC.get("url", "")
     if not url:
@@ -147,6 +178,7 @@ async def run_once() -> int:
         total = replace_pool(conn, data)
         if SYNC.get("ru_check", True):
             await check_russia(conn)
+        record_run(conn, data)
         return total
     finally:
         conn.close()
