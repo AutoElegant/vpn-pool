@@ -11,12 +11,15 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 
 import aiohttp
 
+from . import rucheck
 from .db import connect, init_db
+from .parse import parse_link
 from .settings import CONFIG
-from .state import FIELDS, load_payload
+from .state import load_payload
 
 log = logging.getLogger("sync")
 
@@ -49,17 +52,84 @@ def replace_pool(conn, data: dict) -> int:
         log.warning("в файле пустой пул — оставляю то, что есть")
         return 0
 
+    # Результаты РФ-проверки живут только здесь: раннеру check-host их не
+    # отдаёт, режет облачные адреса. Поэтому перед заливкой запоминаем свои
+    # и возвращаем на место, иначе каждая синхронизация их обнуляла бы.
+    local_ru = {
+        r["fingerprint"]: (r["ru_nodes"], r["ru_checked_at"])
+        for r in conn.execute(
+            "SELECT fingerprint, ru_nodes, ru_checked_at FROM configs WHERE ru_nodes <> -1"
+        )
+    }
+
     keep = {item.get("fingerprint") for item in incoming}
     placeholders = ",".join("?" * len(keep))
     conn.execute(f"DELETE FROM configs WHERE fingerprint NOT IN ({placeholders})", tuple(keep))
     conn.commit()
 
     load_payload(conn, {"pool": incoming, "geo_cache": data.get("geo_cache")})
+
+    restored = [(nodes, ts, fp) for fp, (nodes, ts) in local_ru.items() if fp in keep]
+    conn.executemany(
+        "UPDATE configs SET ru_nodes = ?, ru_checked_at = ? WHERE fingerprint = ?", restored
+    )
+    conn.commit()
+    if restored:
+        log.info("Сохранено прежних результатов РФ-проверки: %d", len(restored))
     total = conn.execute("SELECT COUNT(*) FROM configs WHERE alive = 1").fetchone()[0]
     ru_ok = conn.execute("SELECT COUNT(*) FROM configs WHERE ru_nodes > 0").fetchone()[0]
     log.info("Пул обновлён: %d рабочих, из них доступны из РФ %d (собран %s)",
              total, ru_ok, data.get("updated_at", "?"))
     return total
+
+
+async def check_russia(conn) -> None:
+    """Проверяем доступность из РФ порциями, по кругу.
+
+    Здесь это дёшево и безопасно: несколько десятков HTTPS-запросов
+    к одному домену раз в несколько минут — не то же самое, что коннекты
+    к сотням разных адресов, за которые хостер присылает abuse.
+    """
+    limit = SYNC.get("ru_check_limit", 80)
+    stale_hours = SYNC.get("ru_recheck_hours", 3)
+    horizon = (
+        datetime.now(timezone.utc) - timedelta(hours=stale_hours)
+    ).isoformat(timespec="seconds")
+
+    rows = conn.execute(
+        "SELECT id, link FROM configs WHERE alive = 1 "
+        "  AND (ru_nodes = -1 OR ru_checked_at IS NULL OR ru_checked_at < ?) "
+        "ORDER BY (ru_nodes = -1) DESC, ru_checked_at ASC LIMIT ?",
+        (horizon, limit),
+    ).fetchall()
+    if not rows:
+        log.info("РФ-проверка: всё свежее, нечего проверять")
+        return
+
+    targets = []
+    for r in rows:
+        cfg = parse_link(r["link"])
+        if cfg:
+            targets.append((r["id"], cfg))
+    if not targets:
+        return
+
+    results = await rucheck.tcp_from_russia(
+        targets, concurrency=SYNC.get("ru_check_concurrency", 4)
+    )
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn.executemany(
+        "UPDATE configs SET ru_nodes = ?, ru_checked_at = ? WHERE id = ?",
+        [(nodes, ts, cid) for cid, nodes in results.items()],
+    )
+    conn.commit()
+
+    blocked = conn.execute("SELECT COUNT(*) FROM configs WHERE ru_nodes = 0").fetchone()[0]
+    ok = conn.execute("SELECT COUNT(*) FROM configs WHERE ru_nodes > 0").fetchone()[0]
+    todo = conn.execute(
+        "SELECT COUNT(*) FROM configs WHERE ru_nodes = -1 AND alive = 1"
+    ).fetchone()[0]
+    log.info("Из РФ: доступно %d, заблокировано %d, ещё не проверено %d", ok, blocked, todo)
 
 
 async def run_once() -> int:
@@ -74,7 +144,10 @@ async def run_once() -> int:
     init_db()
     conn = connect()
     try:
-        return replace_pool(conn, data)
+        total = replace_pool(conn, data)
+        if SYNC.get("ru_check", True):
+            await check_russia(conn)
+        return total
     finally:
         conn.close()
 
