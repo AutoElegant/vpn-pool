@@ -1,0 +1,11 @@
+[Unit]
+Description=Запуск сборщика конфигов раз в час
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

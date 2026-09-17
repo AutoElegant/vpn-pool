@@ -1,0 +1,21 @@
+[Unit]
+Description=Telegram-бот раздачи VPN-конфигов
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vpnbot
+WorkingDirectory=/opt/vpnbot
+ExecStart=/opt/vpnbot/venv/bin/python -m bot.main
+Restart=always
+RestartSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/vpnbot/data
+
+[Install]
+WantedBy=multi-user.target

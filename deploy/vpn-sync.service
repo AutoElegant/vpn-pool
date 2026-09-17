@@ -1,0 +1,20 @@
+[Unit]
+Description=Забор готового пула конфигов с GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=vpnbot
+WorkingDirectory=/opt/vpnbot
+ExecStart=/opt/vpnbot/venv/bin/python -m core.sync
+TimeoutStartSec=180
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/vpnbot/data
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+.env
+venv/
+__pycache__/
+*.pyc
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Документация держится локально и на сервере, в публичный репозиторий не едет
+DOCS.md
+README.md

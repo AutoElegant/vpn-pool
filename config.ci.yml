@@ -1,0 +1,71 @@
+# ─────────────── Общие настройки ───────────────
+database: data/vpn.db
+
+collector:
+  protocols: [vless]          # что забираем из источников (Happ умеет и vmess/trojan/ss/hy2)
+  fetch_timeout: 30
+  max_links_per_source: 20000
+
+  # Размер пула: столько рабочих конфигов держим в базе, остальное выбрасываем.
+  # Главный тормоз сервера — проверка, поэтому за проход тестируем
+  # только текущий пул + свежую порцию кандидатов.
+  pool_size: 150
+  candidate_batch: 1500       # на раннере можно куда больше
+  dead_ttl_days: 3            # сколько дней не трогать конфиг, который не ответил
+
+  # Быстрая проверка: TCP-коннект + TLS-хендшейк.
+  # scan_rate — сколько новых адресов в секунду. Специально низкий:
+  # хостер видит все destination IP (они в заголовках, шифрование не помогает),
+  # и залп из тысячи коннектов его автоматика примет за скан портов.
+  scan_rate: 120
+  concurrency: 120
+  connect_timeout: 4
+
+  # Глубокая проверка: реальный прогон трафика через xray-core.
+  # auto = включить, если в системе найден бинарь xray
+  deep_check: auto            # auto | true | false
+  deep_check_url: http://cp.cloudflare.com/generate_204
+  deep_check_timeout: 8
+  deep_check_concurrency: 24
+  deep_check_limit: 900      # сколько конфигов гонять через xray за проход
+
+  # Доступность из РФ. Коллектор стоит в Европе, где нет ТСПУ, поэтому
+  # его собственные проверки не говорят ничего о доступе из России.
+  ru_check: true              # TCP-проверка с нод check-host.net в Москве и Питере
+  ru_check_limit: 400         # IP раннера свежий, лимиты check-host не жмут
+  ru_check_delay: 0.7         # пауза между запросами к check-host, сек
+  risk_threshold: 60          # отсев по признакам ТСПУ: палевный SNI, без TLS и т.п.
+
+  # Гео через ip-api.com (бесплатно, 15 batch-запросов/мин по 100 IP)
+  geo_enabled: true
+  geo_ttl_days: 30
+
+
+# ─────────────── Источники ───────────────
+# Поддерживается plain-text и base64. Всё, что отдаёт vless:// — подойдёт.
+sources:
+  - name: barry-far
+    url: https://raw.githubusercontent.com/barry-far/V2ray-Config/main/Splitted-By-Protocol/vless.txt
+  - name: epodonios
+    url: https://raw.githubusercontent.com/Epodonios/v2ray-configs/main/Splitted-By-Protocol/vless.txt
+  - name: mahdibland-eternity
+    url: https://raw.githubusercontent.com/mahdibland/ShadowsocksAggregator/master/Eternity.txt
+  - name: mahdibland-air
+    url: https://raw.githubusercontent.com/mahdibland/ShadowsocksAggregator/master/EternityAir.txt
+  - name: aliilapro
+    url: https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/sub.txt
+  - name: matinghanbari
+    url: https://raw.githubusercontent.com/MatinGhanbari/v2ray-configs/main/subscriptions/v2ray/super-sub.txt
+  - name: 4n0nymou3-tested
+    url: https://raw.githubusercontent.com/4n0nymou3/multi-proxy-config-fetcher/main/configs/proxy_configs_tested.txt
+  - name: yaney01-telegram
+    url: https://raw.githubusercontent.com/yaney01/telegram-collector/main/channels/protocols/vless
+  - name: yaney01-reality
+    url: https://raw.githubusercontent.com/yaney01/telegram-collector/main/channels/protocols/reality
+
+# ─────────────── Бот ───────────────
+bot:
+  cooldown_seconds: 15        # антифлуд между выдачами конфига одному юзеру
+  daily_limit: 40             # лимит конфигов на юзера в сутки (0 = без лимита)
+  send_qr: true               # присылать QR-код (Happ умеет сканировать)
+  broadcast_rate: 20          # сообщений в секунду при рассылке
