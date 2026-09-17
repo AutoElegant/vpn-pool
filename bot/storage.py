@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
-from core.settings import DB_PATH
+from core.settings import BOT, DB_PATH
 
 _db: aiosqlite.Connection | None = None
 
@@ -109,6 +109,17 @@ async def countries() -> list[tuple[str, str, int]]:
     return [(r["country"], r["name"] or r["country"], r["n"]) for r in await cur.fetchall()]
 
 
+def pick_pool() -> int:
+    """Из скольких лучших конфигов тянем случайный.
+
+    Слишком узкая выборка бьёт по чужим бесплатным серверам: вся нагрузка
+    ложится на несколько десятков, они быстрее умирают, а пользователи
+    видят три страны вместо тридцати. Все кандидаты и так прошли xray
+    и проверку из РФ — между ними разница лишь в пинге.
+    """
+    return max(10, BOT.get("pick_pool", 200))
+
+
 async def pick_config(user_id: int) -> aiosqlite.Row | None:
     """Случайный рабочий конфиг из пула.
 
@@ -125,16 +136,17 @@ async def pick_config(user_id: int) -> aiosqlite.Row | None:
          WHERE {_ALIVE}
            AND c.id NOT IN (SELECT config_id FROM issued WHERE user_id = ? AND ts > ?)
          ORDER BY {_RANK}
-         LIMIT 60
+         LIMIT ?
         """,
-        (user_id, since),
+        (user_id, since, pick_pool()),
     )
     rows = await cur.fetchall()
 
     if not rows:  # всё уже выдавали — снимаем ограничение
         cur = await db.execute(
             f"""SELECT * FROM configs WHERE {_ALIVE}
-                ORDER BY {_RANK} LIMIT 60"""
+                ORDER BY {_RANK} LIMIT ?""",
+            (pick_pool(),),
         )
         rows = await cur.fetchall()
 
