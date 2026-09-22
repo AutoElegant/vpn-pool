@@ -1,15 +1,17 @@
 name: Сбор и проверка конфигов
 
+# Бот остановлен 22.09.2026 — автозапуск выключен, остался только ручной.
+# Вернуть: раскомментировать schedule и push.
 on:
-  schedule:
-    - cron: "7 * * * *"      # каждый час в :07
-  workflow_dispatch:          # и вручную с вкладки Actions
-  push:                       # и при изменении логики проверки
-    branches: [main]
-    paths:
-      - "core/**"
-      - "config.ci.yml"
-      - ".github/workflows/collect.yml"
+  # schedule:
+  #   - cron: "7 * * * *"      # каждый час в :07
+  workflow_dispatch:          # вручную с вкладки Actions
+  # push:                     # и при изменении логики проверки
+  #   branches: [main]
+  #   paths:
+  #     - "core/**"
+  #     - "config.ci.yml"
+  #     - ".github/workflows/collect.yml"
 
 permissions:
   contents: write
